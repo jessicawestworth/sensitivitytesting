@@ -258,7 +258,7 @@ Now save the model
 saveParams(cel_model_trial, "cel_model_trial.rds")
 ```
 
-# Matching and Testing
+# Matching Gear Parameters and Maturity Weight
 
 ## Trying to match the current model to the one made previously on the course
 
@@ -373,3 +373,52 @@ species_params(cel_model_trial_res_tuning) |> select(erepro, R_max)
 cel_model_course_res_tuning <- setBevertonHolt(cel_model_course, erepro = 0.001)
 species_params(cel_model_course_res_tuning) |> select(erepro, R_max)
 ```
+
+# Matching Biomasses
+
+## Set Observed Biomasses of the Unknown Biomass Species in Our Model to the Modelled Biomasses of the Course Model
+
+Load the modelled biomasses of the final course model
+
+```{r}
+getBiomass(cel_model_course)
+```
+
+Identify which species we are missing biomasses for in our trial model
+
+```{r}
+missing_biomass_species <- cel_model_trial@species_params[is.na(cel_model_trial@species_params$biomass_obs), "species"]
+missing_biomass_species
+```
+
+Now we need to set the observed biomass for these species in our trial model to the modelled biomass in the final course model
+
+```{r}
+species_to_update <- c("Poor Cod", "Horse Mackerel", "Mackerel", "Common Dab", "Boarfish")
+biomass_course_model <- c(0.007968153, 0.532999576, 0.552924607, 0.021766977, 0.151676286)
+
+# Update biomass_observed for matching species
+cel_model_trial@species_params[cel_model_trial@species_params$species %in% species_to_update, "biomass_observed"] <- biomass_course_model
+```
+
+Set the model to steady
+
+```{r}
+cel_model_trial <- tuneParams(cel_model_trial)
+#set to steady state matching growth and biomass x3
+saveParams(cel_model_trial, "cel_model_trial_matched_biomass.rds")
+```
+
+Now we compare the minimum erepro values
+
+```{r}
+cel_model_trial_res_tuning <- setBevertonHolt(cel_model_trial, erepro = 0.001)
+
+species_params(cel_model_trial_res_tuning) |> select(erepro, R_max)
+
+cel_model_course_res_tuning <- setBevertonHolt(cel_model_course, erepro = 0.001)
+
+species_params(cel_model_course_res_tuning) |> select(erepro, R_max)
+```
+
+While the minimum erepro values are more similar now, R_max values for each species at this erepro are sometimes different (ie: Herring, sprat, Norway Pout)
