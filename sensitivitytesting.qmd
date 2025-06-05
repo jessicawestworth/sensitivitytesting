@@ -1,26 +1,370 @@
 ---
-title: "sensitivitytesting"
+title: "Sensitivity Testing"
 format: html
 editor: visual
+header-includes:
+  - \usepackage{xurl}
+  - \usepackage{hyperref}
 ---
 
-## Quarto
+# Introduction
 
-Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+We follow the same protocol and code to set our parameters as outlined in Part 2 Tutorial 1, 2, and 3 of the mizer course.
 
-## Running Code
+## Setting/Collecting the Parameters
 
-When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
-
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this
+First we load in the required libraries:
 
 ```{r}
-#| echo: false
-2 * 2
+#| results: 'hide'
+#| message: false
+#| warning: false
+library(mizer)
+library(mizerExperimental)
+library(tidyverse)
+library(rfishbase)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+Load in the the selection of model species and their parameters from Spence et al. (2021)
+
+```{r}
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/species_params_spence_et_al.rds",
+              destfile = "species_params_spence_et_al.rds")
+```
+
+```{r}
+sp_spence <- readRDS("species_params_spence_et_al.rds")
+names(sp_spence)
+```
+
+Then use Spence et al. (2021) list of species to attach the species parameters to
+
+```{r}
+sp_spence$species
+sp <- select(sp_spence, species)
+comment(sp$species) <- "We follow the choice of species made by Spence et.al (2021) https://doi.org/10.1111/faf.12543"
+```
+
+Find and attach the latin names of the species
+
+```{r}
+herring_latin <- common_to_sci("Herring")
+herring_latin
+arrange(herring_latin, SpecCode)
+sp$latin_name <- c("Clupea harengus", # Herring
+                   "Sprattus sprattus", # Sprat
+                   "Gadus morhua", # Cod
+                   "Melanogrammus aeglefinus", # Haddock
+                   "Merlangius merlangus", # Whiting
+                   "Micromesistius poutassou", # Blue whiting
+                   "Trisopterus esmarkii", # Norway Pout
+                   "Trisopterus minutus", # Poor Cod
+                   "Merluccius merluccius", # European Hake
+                   "Lophius piscatorius", # Monkfish
+                   "Trachurus trachurus", # Horse Mackerel
+                   "Scomber scombrus", # Mackerel
+                   "Limanda limanda", # Common Dab
+                   "Pleuronectes platessa", # Plaice
+                   "Lepidorhombus whiffiagonis", # Megrim
+                   "Solea solea", # Sole
+                   "Capros aper") # Boarfish
+
+```
+
+Now we find and add the asymptotic slope (max weight and max length) parameter to our species parameter data frame. We do this by looking at catch data and applying the asymptotic size for those that have one listed. For those without we use the FishBase data. We convert length to weight using the allometric length-weight relationship.
+
+```{r}
+#| results: 'hide'
+#| message: false
+#| warning: false
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/catch.csv",
+              destfile = "catch.csv")
+catch <- read.csv("catch.csv")
+max_size <- catch |>
+    group_by(species) |>
+    summarise(l_max = max(length))
+missing <- !(sp$species %in% max_size$species)
+sp$species[missing]
+max_size_fishbase <- rfishbase::species(sp$latin_name[missing]) |>
+    select(latin_name = Species, l_max = Length)
+max_size_fishbase
+max_size_fishbase <- max_size_fishbase |>
+    left_join(select(sp, species, latin_name),
+              by = "latin_name")
+max_size <- bind_rows(max_size, max_size_fishbase) |>
+    select(species, l_max)
+max_size
+length_weight <- estimate(sp$latin_name, fields = c("Species", "a", "b"))
+length_weight
+sp <- sp |>
+    left_join(length_weight, by = c("latin_name" = "Species")) |>
+    left_join(max_size) |>
+    mutate(w_max = a * l_max ^ b)
+comment(sp$a) <- "Taken from the `a` column in the 'estimates' table on FishBase on 07/12/2023."
+comment(sp$b) <- "Taken from the `b` column in the 'estimates' table on FishBase on 07/12/2023."
+comment(sp$l_max) <- "See https://mizer.course.sizespectrum.org/build/collect-parameters.html#asymptotic-size "
+comment(sp$w_max) <- "Calculated from `l_max` using weight-length parameters `a` and `b`."
+```
+
+Now we add the growth parameters by first getting median of the estimates of the maturity size and age from FishBase and add it to the species paramter data frame.
+
+```{r}
+maturity_tbl <- rfishbase::maturity(sp$latin_name)
+maturity_tbl
+median_maturity <- maturity_tbl |>
+    group_by(Species) |>
+    filter(!is.na(tm), !is.na(Lm)) |>
+    summarise(age_mat = median(tm),
+              l_mat = median(Lm))
+median_maturity
+sp <- sp |>
+    left_join(median_maturity, by = c("latin_name" = "Species")) |>
+    mutate(w_mat = a * l_mat ^ b)
+
+comment(sp$l_mat) <- "Median of `Lm` over all observations on the 'maturity' table on FishBase that had both `Lm` and `tm`."
+comment(sp$age_mat) <- "Median of `tm` over all observations on the 'maturity' table on FishBase that had both `Lm` and `tm`."
+comment(sp$w_mat) <- "Calculated from `l_mat` using weight-length parameters `a` and `b`."
+```
+
+Now we add the predator preference curve, we get sigma and beta values from Spence et al. (2021)
+
+```{r}
+sp <- left_join(sp, select(sp_spence, species, beta, sigma))
+comment(sp$beta) <- comment(sp$sigma) <- "Taken from Spence et.al (2021) https://doi.org/10.1111/faf.12543"
+```
+
+Now we calculate abundances by averaging the spawning stock biomass of the ICES stock assessment reports over a 10-year period (2012-2021). Then convert to grams per sq meter.
+
+```{r}
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/celtic_sea_ssb.rds",
+              destfile = "celtic_sea_ssb.rds")
+sp$biomass_observed <- readRDS("celtic_sea_ssb.rds")
+comment(sp$biomass_observed) <- "Average of spawning stock biomass over the years 2012--2021 taken from ICES stock assessment reports."
+sp$biomass_cutoff <- sp$w_mat
+comment(sp$biomass_cutoff) <- "Set to `w_mat` because `biomass_observed` represents spawning stock biomass."
+sp |> select(species, biomass_observed, biomass_cutoff)
+```
+
+Finally save the species parameters with
+
+```{r}
+saveRDS(sp, "celtic_species_params.rds")
+```
+
+Now we set the species interaction matrix based on the spatial and temporal overlap of species within the ecosystem using the matrix in Spence et al. (2021)
+
+```{r}
+download.file("https://raw.githubusercontent.com/gustavdelius/mizerCourse/master/build/celtic_interaction.csv",
+              destfile = "celtic_interaction.csv")
+celtic_interaction <-  read.csv("celtic_interaction.csv", row.names = 1)
+```
+
+Now we set the gear parameters based on Spence et al. (2021)
+
+```{r}
+download.file("https://raw.githubusercontent.com/gustavdelius/mizerCourse/master/build/celtic_gear_params.csv",
+              destfile = "celtic_gear_params.csv")
+celtic_gear_params <- read.csv("celtic_gear_params.csv")
+```
+
+## Creating the Model
+
+Load in your species parameters
+
+```{r}
+celtic_species_params <- readRDS("celtic_species_params.rds")
+celtic_gear_params <- read.csv("celtic_gear_params.csv")
+celtic_interaction <- read.csv("celtic_interaction.csv", row.names = 1)
+```
+
+Create a MizerParams object
+
+```{r}
+cel_model <- newMultispeciesParams(species_params = celtic_species_params,
+                                   gear_params = celtic_gear_params,
+                                   interaction = celtic_interaction, 
+                                   initial_effort = 1,
+                                   lambda = 2.05, n = 3/4, p = 3/4)
+
+cel_model <- 
+    setMetadata(cel_model, 
+                title = "Celtic Sea model from mizer course in Nov 2022",
+                description = "See https://mizer.course.sizespectrum.org/build")
+```
+
+Project to steady state, calibrate, match, repeat
+
+```{r}
+cel_model2 <- steady(cel_model)
+cel_model3 <- calibrateBiomass(cel_model2)
+cel_model4 <- matchBiomasses(cel_model3)
+cel_model5 <- steady(cel_model4)
+age_mat_model = age_mat(cel_model5)
+age_mat_observed = celtic_species_params$age_mat
+data.frame(age_mat_model, age_mat_observed)
+cel_model6 <- matchGrowth(cel_model5)
+age_mat_model = age_mat(cel_model6)
+data.frame(age_mat_model, age_mat_observed)
+cel_model7 <- steady(cel_model6) 
+age_mat_model = age_mat(cel_model7)
+data.frame(age_mat_model, age_mat_observed)
+cel_model8 <- cel_model7 |>
+    calibrateBiomass() |> matchBiomasses() |> matchGrowth() |> steady() |>
+    calibrateBiomass() |> matchBiomasses() |> matchGrowth() |> steady() 
+age_mat_model = age_mat(cel_model8)
+data.frame(age_mat_model, age_mat_observed)
+saveParams(cel_model8, "cel_model.rds")
+```
+
+## Refining the Model
+
+Load in the model we created
+
+```{r}
+cel_model <- readParams("cel_model.rds")
+```
+
+Increasing the resource down by a factor of 1/2 as instructed in the course and matching biomasses after the fact.
+
+```{r}
+cel_model <- scaleDownBackground(cel_model, factor = 1/2)
+cel_model <- cel_model |> matchGrowth() |> steady()
+cel_model <- cel_model |> matchGrowth() |> steady()
+```
+
+TuneParams function
+
+```{r}
+cel_model_trial <- tuneParams(cel_model)
+```
+
+In tuneParams we:
+
+1)Scale the background down by a factor of 0.5
+
+2)Click steady
+
+3)Click match biomass under the abundance tab
+
+4)Click steady
+
+5)Click steady (with match growth and biomass checked)
+
+6)Click return
+
+Now save the model
+
+```{r}
+saveParams(cel_model_trial, "cel_model_trial.rds")
+```
+
+## Trying to match the current model to the one made previously on the course
+
+Load in catch and yield data for our current model (cel_model_trial)
+
+```{r}
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/catch.csv",
+              destfile = "catch.csv")
+catch_lengths <- read.csv("catch.csv")
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/celtic_yields.rds",
+              destfile = "celtic_yields.rds")
+gear_params(cel_model_trial)$yield_observed <- readRDS("celtic_yields.rds")
+```
+
+Load in the model from the final tutorial in the course (cel_model_course), and add the yield data from the previous section to it
+
+```{r}
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/cel_model_landings.rds",
+              destfile = "cel_model_landings.rds")
+cel_model_course <- readParams("cel_model_landings.rds")
+gear_params(cel_model_course)$yield_observed <- readRDS("celtic_yields.rds")
+```
+
+Match gear params, w_mat25, and w_mat of both models
+
+```{r}
+gear_params(cel_model_trial) <- gear_params(cel_model_course)
+
+cel_model_trial@species_params[cel_model_trial@species_params$species, c("w_mat25", "w_mat")] <-
+  cel_model_course@species_params[cel_model_course@species_params$species, c("w_mat25", "w_mat")]
+
+```
+
+After changing the parameters of our model to match the parameters of the final course model. Run our model (cel_model_trial) to a steady state matching growth and biomass before hand
+
+```{r}
+cel_model_trial <- tuneParams(cel_model_trial)
+#set to steady state matching growth and biomass
+saveParams(cel_model_trial, "cel_model_trial.rds")
+```
+
+Now lets look at the similarity between the params of the final mizer course model and the trial model which we have made similar to the course model
+
+First look at w_mat25 (values are the same because we set this)
+
+```{r}
+species_params(cel_model_trial) |> select(w_mat25)
+species_params(cel_model_course) |> select(w_mat25)
+```
+
+Then look at w_mat (values are the same because we set this)
+
+```{r}
+species_params(cel_model_trial) |> select(w_mat)
+species_params(cel_model_course) |> select(w_mat)
+```
+
+Then look at l50 (values are the same because we set this)
+
+```{r}
+gear_params(cel_model_trial) |> select(l50)
+gear_params(cel_model_course) |> select(l50)
+```
+
+Then look at l25 (values are the same because we set this)
+
+```{r}
+gear_params(cel_model_trial) |> select(l25)
+gear_params(cel_model_course) |> select(l25)
+```
+
+Then look at catchability (values are the same because we set this)
+
+```{r}
+gear_params(cel_model_trial) |> select(catchability)
+gear_params(cel_model_course) |> select(catchability)
+```
+
+Then look at interaction matrix (values are the same because we followed the instructions in the course)
+
+```{r}
+interaction_matrix(cel_model_trial)
+interaction_matrix(cel_model_course)
+```
+
+Now look at reproduction levels (they are similar)
+
+```{r}
+getReproductionLevel(cel_model_trial)
+getReproductionLevel(cel_model_course)
+```
+
+Then look at Biomass (similar for most species, but different for Sprat, Poor cod, Horse Mackerel, Mackerel, and Boarfish)
+
+```{r}
+{r}
+getBiomass(cel_model_trial)
+getBiomass(cel_model_course)
+```
+
+But when we look at the how low we can set the erepro get even more dissimilar values:
+
+```{r}
+cel_model_trial_res_tuning <- setBevertonHolt(cel_model_trial, erepro = 0.001)
+species_params(cel_model_trial_res_tuning) |> select(erepro, R_max)
+```
+
+```{r}
+cel_model_course_res_tuning <- setBevertonHolt(cel_model_course, erepro = 0.001)
+species_params(cel_model_course_res_tuning) |> select(erepro, R_max)
+```
