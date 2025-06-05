@@ -1,13 +1,13 @@
 ---
 title: "Sensitivity Testing"
-format: html
+format: pdf
 editor: visual
 header-includes:
   - \usepackage{xurl}
   - \usepackage{hyperref}
 ---
 
-# Introduction
+# Set Up (following course)
 
 We follow the same protocol and code to set our parameters as outlined in Part 2 Tutorial 1, 2, and 3 of the mizer course.
 
@@ -258,6 +258,8 @@ Now save the model
 saveParams(cel_model_trial, "cel_model_trial.rds")
 ```
 
+# Matching and Testing
+
 ## Trying to match the current model to the one made previously on the course
 
 Load in catch and yield data for our current model (cel_model_trial)
@@ -274,6 +276,7 @@ gear_params(cel_model_trial)$yield_observed <- readRDS("celtic_yields.rds")
 Load in the model from the final tutorial in the course (cel_model_course), and add the yield data from the previous section to it
 
 ```{r}
+#| label: loading final course model
 download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/cel_model_landings.rds",
               destfile = "cel_model_landings.rds")
 cel_model_course <- readParams("cel_model_landings.rds")
@@ -283,11 +286,14 @@ gear_params(cel_model_course)$yield_observed <- readRDS("celtic_yields.rds")
 Match gear params, w_mat25, and w_mat of both models
 
 ```{r}
+#| label: match gear params
 gear_params(cel_model_trial) <- gear_params(cel_model_course)
+```
 
+```{r}
+#| label: match w_mat and w_mat25
 cel_model_trial@species_params[cel_model_trial@species_params$species, c("w_mat25", "w_mat")] <-
   cel_model_course@species_params[cel_model_course@species_params$species, c("w_mat25", "w_mat")]
-
 ```
 
 After changing the parameters of our model to match the parameters of the final course model. Run our model (cel_model_trial) to a steady state matching growth and biomass before hand
@@ -352,7 +358,6 @@ getReproductionLevel(cel_model_course)
 Then look at Biomass (similar for most species, but different for Sprat, Poor cod, Horse Mackerel, Mackerel, and Boarfish)
 
 ```{r}
-{r}
 getBiomass(cel_model_trial)
 getBiomass(cel_model_course)
 ```
