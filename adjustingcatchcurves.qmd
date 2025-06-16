@@ -1,0 +1,56 @@
+---
+title: "Adjusting Catch Curves"
+format: pdf
+editor: visual
+---
+
+## Load in Libraries
+
+```{r}
+#| results: 'hide'
+#| message: false
+#| warning: false
+library(mizer)
+library(mizerExperimental)
+library(tidyverse)
+library(rfishbase)
+```
+
+## Load in Course Model
+
+```{r}
+#| label: loading final course model
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/cel_model_landings.rds",
+              destfile = "cel_model_landings.rds")
+cel_model_course <- readParams("cel_model_landings.rds")
+gear_params(cel_model_course)$yield_observed <- readRDS("celtic_yields.rds")
+```
+
+## Fitting Parameters to Catch Curves into Tune Params
+
+In tuneParams (), catchability, L50, L50/L25, w_mat, w_mat/w_mat25 were altered
+
+```{r}
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/catch.csv",
+              destfile = "catch.csv")
+catch_lengths <- read.csv("catch.csv")
+#cel_model_adjusted_catch_curves<-tuneParams(cel_model_course, catch = catch_lengths)
+#saveParams(cel_model_adjusted_catch_curves, "cel_model_adjusted_catch_curves.rds")
+cel_model_adjusted_catch_curves<-readParams("cel_model_adjusted_catch_curves.rds")
+
+#tuneParams(cel_model_adjusted_catch_curves, catch = catch_lengths)
+```
+
+Now compare the reproduction levels between the two models
+
+```{r}
+cel_model_adjusted_catch_curves_res <- setBevertonHolt(cel_model_adjusted_catch_curves, erepro = 0.001)
+
+species_params(cel_model_adjusted_catch_curves_res) |> select(erepro, R_max)
+
+cel_model_course_res_tuning <- setBevertonHolt(cel_model_course, erepro = 0.001)
+
+species_params(cel_model_course_res_tuning) |> select(erepro, R_max)
+```
+
+Both models have similar erepro values and R_max values
