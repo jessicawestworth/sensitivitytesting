@@ -1,4 +1,15 @@
 .Rproj.user
 .Rhistory
 .RData
-.Ruserdata
+.pdf
+celtic_interaction.csv
+celtic_gear_params.csv
+catch.csv
+celtic_yields.rds
+celtic_sea_ssb.rds
+celtic_species_params.rds
+species_params_spence_et_al.rds
+sensitivitytesting.html
+sensitivitytesting.rmarkdown
+sensitivitytesting_files
+cel_model.rds
