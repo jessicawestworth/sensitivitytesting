@@ -1,0 +1,129 @@
+---
+title: "Adjusting max size of the Final Course Model"
+format: pdf
+editor: visual
+---
+
+## Load in Libraries
+
+```{r}
+#| results: 'hide'
+#| message: false
+#| warning: false
+library(mizer)
+library(mizerExperimental)
+library(tidyverse)
+library(rfishbase)
+```
+
+## Load in Course Model
+
+```{r}
+#| label: loading final course model
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/cel_model_landings.rds",
+              destfile = "cel_model_landings.rds")
+cel_model_course <- readParams("cel_model_landings.rds")
+gear_params(cel_model_course)$yield_observed <- readRDS("celtic_yields.rds")
+```
+
+Making a data frame with the new w_max and l_max values
+
+```{r}
+cel_model_course <- readParams("cel_model_landings.rds")
+params<-species_params(cel_model_course)
+saveRDS(params, file = "species_params.rds")
+params <- readRDS("species_params.rds")
+
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/species_params_spence_et_al.rds",
+              destfile = "species_params_spence_et_al.rds")
+sp_spence <- readRDS("species_params_spence_et_al.rds")
+sp <- select(sp_spence, species)
+sp$latin_name <- c("Clupea harengus", # Herring
+                   "Sprattus sprattus", # Sprat
+                   "Gadus morhua", # Cod
+                   "Melanogrammus aeglefinus", # Haddock
+                   "Merlangius merlangus", # Whiting
+                   "Micromesistius poutassou", # Blue whiting
+                   "Trisopterus esmarkii", # Norway Pout
+                   "Trisopterus minutus", # Poor Cod
+                   "Merluccius merluccius", # European Hake
+                   "Lophius piscatorius", # Monkfish
+                   "Trachurus trachurus", # Horse Mackerel
+                   "Scomber scombrus", # Mackerel
+                   "Limanda limanda", # Common Dab
+                   "Pleuronectes platessa", # Plaice
+                   "Lepidorhombus whiffiagonis", # Megrim
+                   "Solea solea", # Sole
+                   "Capros aper") # Boarfish
+max_size_fishbase <- rfishbase::species(sp$latin_name) |>
+    select(latin_name = Species, w_max = Weight, l_max = Length)
+max_size_fishbase <- left_join(sp, max_size_fishbase, by = "latin_name")
+length_weight <- estimate(max_size_fishbase$latin_name, fields = c("Species", "a", "b"))
+max_size <- max_size_fishbase |>
+    left_join(length_weight, by = c("latin_name" = "Species"))
+max_size <- max_size |>
+    mutate(w_max_calc = a * l_max ^ b)
+max_size$w_max[is.na(max_size$w_max)] <- max_size$w_max_calc[is.na(max_size$w_max)]
+max_size<-max_size[c("species","w_max","l_max")]
+```
+
+```{r}
+#new species parameters
+max_size
+
+# Merge new w_max and l_max values
+cel_model_course@species_params <- merge(
+  cel_model_course@species_params, 
+  max_size, 
+  by = "species", 
+  suffixes = c("", ".new")
+)
+
+# Overwrite old values
+cel_model_course@species_params$w_max <- cel_model_course@species_params$w_max.new
+cel_model_course@species_params$l_max <- cel_model_course@species_params$l_max.new
+
+# Clean up the merged columns
+cel_model_course@species_params <- cel_model_course@species_params[, !grepl(".new$", names(cel_model_course@species_params))]
+
+#validate
+#cel_model_course <- validParams(cel_model_course)
+```
+
+Find an error, due to the changing of w_max, which occured due to the fact the w_max now exceeds the model's maximum grid weight and that now w_max is internally inconsistent with other various slots such as psi, intake_max, etc.
+
+To fix this we first need to do some diagnosis of the problem and check if the new w_max value extends past the weight grid
+
+```{r}
+max(cel_model_course@species_params$w_max)
+max(cel_model_course@w)
+```
+
+Yes it does extend past the weight grid: w_max is \> than w, therefore we need to adjust the weight grid.
+
+```{r}
+# Save updated species_params before rebuilding
+updated_species_params <- cel_model_course@species_params
+
+# Rebuild MizerParams with updated species_params and same other settings
+cel_model_course <- newMultispeciesParams(
+  species_params = updated_species_params,
+  interaction = cel_model_course@interaction,
+  gear_params = cel_model_course@gear_params,
+  no_w = 100,  # Or adjust for finer resolution
+  min_w = min(cel_model_course@w),
+  max_w = max(updated_species_params$w_max) * 1.1  # 10% buffer
+)
+#validObject(cel_model_course)
+saveRDS(cel_model_course, "cel_model_course_updated.rds")
+```
+
+Lets check the new model and run to a steady state in tuneParams
+
+```{r}
+cel_model_course_updated<-readParams("cel_model_course_updated.rds")
+cel_model_course_updated<-tuneParams(cel_model_course_updated)
+saveParams(cel_model_course_updated, "cel_model_course_updated.rds")
+```
+
+After clicking steady twice the model does not converge after 99 years and requires an unrealistic erepro greater than 1 for Blue whiting, Boarfish, Cod, Common Dab, European Hake, Haddock, Herring etc... additionally the feeding level is at 1 for all species.
