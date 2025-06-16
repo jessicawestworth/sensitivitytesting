@@ -1,0 +1,162 @@
+---
+title: "Making a model"
+format: pdf
+editor: visual
+---
+
+## Load in Libraries
+
+```{r}
+#| results: 'hide'
+#| message: false
+#| warning: false
+library(mizer)
+library(mizerExperimental)
+library(tidyverse)
+library(rfishbase)
+```
+
+# Model 1
+
+## Species Pameters for Model 1
+
+Take all parametes from fish base which are possible for those not possible take them from the previous species parameters
+
+```{r}
+params<-species_params(cel_model_course)
+saveRDS(params, file = "species_params.rds")
+params <- readRDS("species_params.rds")
+
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/species_params_spence_et_al.rds",
+              destfile = "species_params_spence_et_al.rds")
+sp_spence <- readRDS("species_params_spence_et_al.rds")
+sp <- select(sp_spence, species)
+sp$latin_name <- c("Clupea harengus", # Herring
+                   "Sprattus sprattus", # Sprat
+                   "Gadus morhua", # Cod
+                   "Melanogrammus aeglefinus", # Haddock
+                   "Merlangius merlangus", # Whiting
+                   "Micromesistius poutassou", # Blue whiting
+                   "Trisopterus esmarkii", # Norway Pout
+                   "Trisopterus minutus", # Poor Cod
+                   "Merluccius merluccius", # European Hake
+                   "Lophius piscatorius", # Monkfish
+                   "Trachurus trachurus", # Horse Mackerel
+                   "Scomber scombrus", # Mackerel
+                   "Limanda limanda", # Common Dab
+                   "Pleuronectes platessa", # Plaice
+                   "Lepidorhombus whiffiagonis", # Megrim
+                   "Solea solea", # Sole
+                   "Capros aper") # Boarfish
+```
+
+Input size parameters
+
+```{r}
+max_size_fishbase <- rfishbase::species(sp$latin_name) |>
+    select(latin_name = Species, w_max = Weight, l_max = Length)
+max_size_fishbase <- left_join(sp, max_size_fishbase, by = "latin_name")
+length_weight <- estimate(max_size_fishbase$latin_name, fields = c("Species", "a", "b"))
+max_size <- max_size_fishbase |>
+    left_join(length_weight, by = c("latin_name" = "Species"))
+max_size <- max_size |>
+    mutate(w_max_calc = a * l_max ^ b)
+max_size$w_max[is.na(max_size$w_max)] <- max_size$w_max_calc[is.na(max_size$w_max)]
+species_params<-max_size[,-7]
+```
+
+Input maturity params including age_mat, l_mat and w_mat (following course)
+
+```{r}
+#get estimates on maturity size and maturity age from the maturity table on fish base
+maturity_tbl <- rfishbase::maturity(sp$latin_name)
+
+#get the median values over all observations where both length at maturity and age at maturity are given
+median_maturity <- maturity_tbl |>
+    group_by(Species) |>
+    filter(!is.na(tm), !is.na(Lm)) |>
+    summarise(age_mat = median(tm),
+              l_mat = median(Lm))
+median_maturity
+
+species_params <- species_params |>
+    left_join(median_maturity, by = c("latin_name" = "Species")) |>
+    mutate(w_mat = a * l_mat ^ b)
+```
+
+get predation kernels
+
+```{r}
+species_params <- left_join(species_params, select(sp_spence, species, beta, sigma))
+```
+
+get observed biomass and cut off biomass
+
+```{r}
+
+download.file("https://github.com/gustavdelius/mizerCourse/raw/master/build/celtic_sea_ssb.rds",
+              destfile = "celtic_sea_ssb.rds")
+species_params$biomass_observed <- readRDS("celtic_sea_ssb.rds")
+
+species_params$biomass_cutoff <- species_params$w_mat
+species_params |> select(species, biomass_observed, biomass_cutoff)
+
+species_to_update <- c("Poor Cod", "Horse Mackerel", "Mackerel", "Common Dab", "Boarfish")
+biomass_course_model <- c(0.007968153, 0.532999576, 0.552924607, 0.021766977, 0.151676286)
+rows_to_update <- species_params$species %in% species_to_update
+species_params$biomass_observed[rows_to_update] <- biomass_course_model
+
+saveRDS(species_params, "species_params.rds")
+```
+
+Load in the gear and species matrix params from spence et al.
+
+```{r}
+download.file("https://raw.githubusercontent.com/gustavdelius/mizerCourse/master/build/celtic_gear_params.csv",
+              destfile = "celtic_gear_params.csv")
+celtic_gear_params <- read.csv("celtic_gear_params.csv")
+
+download.file("https://raw.githubusercontent.com/gustavdelius/mizerCourse/master/build/celtic_interaction.csv",
+              destfile = "celtic_interaction.csv")
+celtic_interaction <-  read.csv("celtic_interaction.csv", row.names = 1)
+```
+
+## Now make the params object into a model
+
+```{r}
+params_trial <- readRDS("species_params.rds")
+celtic_gear_params <- read.csv("celtic_gear_params.csv")
+celtic_interaction <- read.csv("celtic_interaction.csv", row.names = 1)
+
+trial_model <- newMultispeciesParams(species_params = params_trial,
+                                   gear_params = celtic_gear_params,
+                                   interaction = celtic_interaction, 
+                                   initial_effort = 1,
+                                   lambda = 2.05, n = 3/4, p = 3/4)
+```
+
+Project to steady state (calibrate match repeat)
+
+```{r}
+trial_model2 <- steady(trial_model)
+trial_model3 <- calibrateBiomass(trial_model2)
+trial_model4 <- matchBiomasses(trial_model3)
+trial_model5 <- steady(trial_model4)
+age_mat_model = age_mat(trial_model5)
+age_mat_observed = celtic_species_params$age_mat
+data.frame(age_mat_model, age_mat_observed)
+trial_model6 <- matchGrowth(trial_model5)
+age_mat_model = age_mat(trial_model6)
+data.frame(age_mat_model, age_mat_observed)
+trial_model7 <- steady(trial_model6) 
+age_mat_model = age_mat(trial_model7)
+data.frame(age_mat_model, age_mat_observed)
+trial_model8 <- trial_model7 |>
+    calibrateBiomass() |> matchBiomasses() |> matchGrowth() |> steady() |>
+    calibrateBiomass() |> matchBiomasses() |> matchGrowth() |> steady() 
+age_mat_model = age_mat(trial_model8)
+data.frame(age_mat_model, age_mat_observed)
+saveParams(trial_model8, "trial_model.rds")
+```
+
+Model is unable to reach a steady state using the same methods outlined in the course, erepro values for species are required to be set at a value greater than 1, and simulation does not converge after 99 years.
