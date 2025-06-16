@@ -1,5 +1,5 @@
 ---
-title: "Making a model"
+title: "Using Alternative Max Sizes To Create a Mizer Model Using the Methodology Outlined in the Mizer Course"
 format: pdf
 editor: visual
 ---
@@ -23,6 +23,7 @@ library(rfishbase)
 Take all parametes from fish base which are possible for those not possible take them from the previous species parameters
 
 ```{r}
+cel_model_course <- readParams("cel_model_landings.rds")
 params<-species_params(cel_model_course)
 saveRDS(params, file = "species_params.rds")
 params <- readRDS("species_params.rds")
@@ -143,7 +144,7 @@ trial_model3 <- calibrateBiomass(trial_model2)
 trial_model4 <- matchBiomasses(trial_model3)
 trial_model5 <- steady(trial_model4)
 age_mat_model = age_mat(trial_model5)
-age_mat_observed = celtic_species_params$age_mat
+age_mat_observed = params_trial$age_mat
 data.frame(age_mat_model, age_mat_observed)
 trial_model6 <- matchGrowth(trial_model5)
 age_mat_model = age_mat(trial_model6)
