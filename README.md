@@ -47,8 +47,8 @@ differences:
     methodology calls for loading species data from FishBase.
 
 2.  The use of the median l_max and w_max parameters for all species
-    from FishBase rather than those utilized in [Spence et al.,
-    2021](https://onlinelibrary.wiley.com/doi/10.1111/faf.12543).
+    from FishBase rather than those utilized in [Spence et
+    al. (2021)](https://onlinelibrary.wiley.com/doi/10.1111/faf.12543).
 
 - We then attempt to run the model to a steady state.
 
@@ -66,8 +66,8 @@ with one key change made:
 
 ### [`adjustingcatchcurves.pdf`](https://github.com/jessicawestworth/sensitivitytesting/blob/main/adjustingcatchcurves.pdf)
 
-This document uses the [final model
-course](https://github.com/gustavdelius/mizerCourse/blob/master/build/cel_model_landings.rds),
+This document uses the [final course
+model](https://github.com/gustavdelius/mizerCourse/blob/master/build/cel_model_landings.rds),
 with one key change made:
 
 1.  Small adjustments to catchability, L50, L50-L25, w_mat, and
